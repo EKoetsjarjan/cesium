@@ -6,6 +6,7 @@ define([
         '../Core/Cartesian3',
         '../Core/Cartesian4',
         '../Core/Cartographic',
+        '../Core/Check',
         '../Core/Color',
         '../Core/ColorGeometryInstanceAttribute',
         '../Core/createGuid',
@@ -68,6 +69,7 @@ define([
         './PerformanceDisplay',
         './PerInstanceColorAppearance',
         './PickDepth',
+        './Picker',
         './PostProcessStageCollection',
         './Primitive',
         './PrimitiveCollection',
@@ -87,6 +89,7 @@ define([
         Cartesian3,
         Cartesian4,
         Cartographic,
+        Check,
         Color,
         ColorGeometryInstanceAttribute,
         createGuid,
@@ -149,6 +152,7 @@ define([
         PerformanceDisplay,
         PerInstanceColorAppearance,
         PickDepth,
+        Picker,
         PostProcessStageCollection,
         Primitive,
         PrimitiveCollection,
@@ -340,6 +344,8 @@ define([
 
         this._pickDepths = [];
         this._debugGlobeDepths = [];
+
+        this._picker = new Picker(this);
 
         this._pickDepthPassState = undefined;
         this._pickDepthFramebuffer = undefined;
@@ -3737,6 +3743,61 @@ define([
         }
 
         return result;
+    };
+
+    Scene.prototype.pickPositionFromRay = function(ray, result) {
+        if (!this.useDepthPicking) {
+            return undefined;
+        }
+        //>>includeStart('debug', pragmas.debug);
+        Check.defined('ray', ray);
+        //>>includeEnd('debug');
+
+        var context = this._context;
+        var us = context.uniformState;
+        var frameState = this._frameState;
+
+        var picker = this._picker;
+        var camera = picker.camera;
+        camera.positionWC = ray.origin;
+        camera.directionWC = ray.directionWC;
+
+        picker.begin(this, ray);
+        var distance = picker.end(this, ray);
+        Ray.getPoint(ray, distance, result);
+
+
+        this._jobScheduler.disableThisFrame();
+
+        // Update with previous frame's number and time, assuming that render is called before picking.
+        updateFrameState(this, frameState.frameNumber, frameState.time);
+
+
+
+
+        frameState.cullingVolume = getPickCullingVolume(this, drawingBufferPosition, rectangleWidth, rectangleHeight);
+        frameState.invertClassification = false;
+        frameState.passes.pick = true;
+        frameState.passes.depth = true;
+
+        us.update(frameState);
+
+        scratchRectangle.x = drawingBufferPosition.x - ((rectangleWidth - 1.0) * 0.5);
+        scratchRectangle.y = (this.drawingBufferHeight - drawingBufferPosition.y) - ((rectangleHeight - 1.0) * 0.5);
+        scratchRectangle.width = rectangleWidth;
+        scratchRectangle.height = rectangleHeight;
+        var passState = this._pickFramebuffer.begin(scratchRectangle);
+
+        updateEnvironment(this, passState);
+        updateAndExecuteCommands(this, passState, scratchColorZero);
+        resolveFramebuffers(this, passState);
+
+        var object = this._pickFramebuffer.end(scratchRectangle);
+        context.endFrame();
+        callAfterRenderFunctions(this);
+        return object;
+
+
     };
 
     /**
